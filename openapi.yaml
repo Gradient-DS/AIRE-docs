@@ -1,0 +1,148 @@
+openapi: 3.1.0
+info:
+  title: AIRE API
+  version: 1.0.0
+  description: |
+    REST-interface van AIRE.  
+    Authenticatie verloopt via OpenID Connect op
+    https://werkplaats.voorlandbouwennatuur.nl (Simple OAuth).
+
+servers:
+  - url: https://aire.voorlandbouwennatuur.nl
+
+#######################################################################
+# 1.  Security-definitie
+#######################################################################
+components:
+  securitySchemes:
+    OAuth2:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: https://werkplaats.voorlandbouwennatuur.nl/oauth/authorize
+          tokenUrl:         https://werkplaats.voorlandbouwennatuur.nl/oauth/token
+          scopes:
+            aire: Volledige toegang tot chat-functionaliteit
+
+  #####################################################################
+  # 2.  Reeds bestaand payload-schema (ongewijzigd)
+  #####################################################################
+  schemas:
+    ResponseStreamRequestPayload:
+      $schema: http://json-schema.org/draft-07/schema#
+      title:  ResponseStreamRequestPayload
+      type:   object
+      properties:
+        chat_history:
+          type: array
+          items:
+            type: object
+            properties:
+              role:    { type: string }
+              message: { type: string }
+              sources:
+                type: array
+                description: Provided for system messages.
+                items:
+                  type: object
+                  properties:
+                    link:        { type: string }
+                    title:       { type: string }
+                    summary:     { type: string }
+                    document_id: { type: integer }
+                    year:        { type: integer }
+                    author:      { type: string }
+                  required: [link, title, summary, document_id, year, author]
+            required: [role, message]
+        question: { type: string }
+        type:     { type: string, enum: [new, dossier, document] }
+        document_ids:
+          type: array
+          items: { type: integer }
+      required: [chat_history, question, type]
+      if:
+        properties:
+          type: { enum: [dossier, document] }
+      then:
+        required: [document_ids]
+
+#######################################################################
+# 3.  API-routes
+#######################################################################
+paths:
+
+  #####################################################################
+  # 3.1  Chatbericht sturen (bestond al impliciet in implementatie)
+  #####################################################################
+  /api/v1/chat/messages:
+    post:
+      summary:  Start of vervolg van een chat-conversatie
+      operationId: sendMessage
+      security:
+        - OAuth2: [aire]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResponseStreamRequestPayload'
+      responses:
+        "200":
+          description: Streaming response met AIRE-antwoord
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  stream: { type: string }
+
+  #####################################################################
+  # 3.2  Chat-geschiedenis ophalen
+  #####################################################################
+  /api/v1/chat/history:
+    get:
+      summary:  Huidige chat-geschiedenis van ingelogde gebruiker
+      operationId: getHistory
+      security:
+        - OAuth2: [aire]
+      responses:
+        "200":
+          description: Lijst van chatberichten
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ResponseStreamRequestPayload/properties/chat_history/items'
+    delete:
+      summary:  Verwijder alle chat-berichten van huidige gebruiker
+      operationId: deleteHistory
+      security:
+        - OAuth2: [aire]
+      responses:
+        "204":
+          description: Chat-geschiedenis verwijderd
+
+  #####################################################################
+  # 3.3  Access-token verversen (server-side flow)
+  #####################################################################
+  /api/refresh:
+    get:
+      summary:  Vervang verlopen access-token via refresh-token (HttpOnly-cookie)
+      operationId: refreshToken
+      description: |
+        Wordt door de front-end aangeroepen als het access-token bijna of net
+        verlopen is.  Vereist dat de browser een geldige `refresh_token`
+        HttpOnly-cookie meestuurt.
+      responses:
+        "204":
+          description: Nieuw access-token gezet in HttpOnly-cookie
+        "401":
+          description: Refresh-token ongeldig — gebruiker moet opnieuw inloggen
+
+#######################################################################
+# 4.  (Optioneel) externe OIDC-metadata als lezer-verwijzing
+#######################################################################
+externalDocs:
+  description: OpenID-Connect Discovery-document
+  url: https://werkplaats.voorlandbouwennatuur.nl/.well-known/openid-configuration
